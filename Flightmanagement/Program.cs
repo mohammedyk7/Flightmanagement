@@ -151,7 +151,10 @@ while (true)
                     break;
                 }
 
-            case "9" when ANALYTICS_ENABLED: await RunTopRoutesRevenueAsync(flightQuery); break;
+            case "9" when ANALYTICS_ENABLED:
+                await RunTopRoutesRevenueAsync(flightQuery, db);   // << add db
+                break;
+
             case "10" when ANALYTICS_ENABLED: await RunOnTimePerformanceAsync(flightQuery); break;
             case "11" when ANALYTICS_ENABLED: await RunSeatOccupancyAsync(flightQuery); break;
             case "12" when ANALYTICS_ENABLED: await RunAvailableSeatsAsync(flightQuery); break;
@@ -361,22 +364,63 @@ static async Task PrintDbStatsAsync(FlightContext db)
 
 // --------------------------- Analytics helpers -----------------------------
 
-static async Task RunTopRoutesRevenueAsync(IFlightQueryService svc)
+static async Task RunTopRoutesRevenueAsync(IFlightQueryService svc, FlightContext db)
 {
     var from = AskDate("From (UTC) yyyy-MM-dd");
     var to = AskDate("To   (UTC) yyyy-MM-dd");
+
     Console.Write("Top N: ");
     var topN = ReadInt(min: 1);
 
+    // Normalize range if user typed it backwards
+    if (from > to)
+    {
+        (from, to) = (to, from);
+        Console.WriteLine($"(note) Swapped date range to {from:yyyy-MM-dd} .. {to:yyyy-MM-dd}");
+    }
+
+    // Try the real service first (once fares/tickets are wired this will return Revenue)
     var res = await svc.GetTopRoutesByRevenueAsync(from, to, topN);
     var list = res?.ToList() ?? new List<RouteRevenueDto>();
-    if (list.Count == 0) { Console.WriteLine("No data."); return; }
 
-    Console.WriteLine("\nRoute   Flights  Seats  AvgFare    Revenue");
-    Console.WriteLine(new string('-', 55));
+    // Fallback: derive something from the Flights table so you SEE output immediately
+    if (list.Count == 0)
+    {
+        Console.WriteLine("No data from service — deriving top routes from Flights table.");
+
+        // Group by RouteId and count flights in the window.
+        // (We don’t know your fares yet, so AvgFare/Revenue are 0 for now.)
+      
+            
+            list = db.Flights
+    .AsNoTracking()
+    .Where(f => f.DepartureTime >= from && f.DepartureTime <= to)
+    .GroupBy(f => f.RouteId)
+    .Select(g => new RouteRevenueDto(
+        "Route#" + g.Key,   // RouteCode
+        g.Count(),          // FlightCount
+        0,                  // SeatsSold
+        0m,                 // AvgFare
+        0m                  // TotalRevenue
+    ))
+    .OrderByDescending(x => x.FlightCount)
+    .Take(topN)
+    .ToList();
+
+    }
+
+    if (list.Count == 0)
+    {
+        Console.WriteLine("No data.");
+        return;
+    }
+
+    Console.WriteLine("\nRoute        Flights  Seats  AvgFare    Revenue");
+    Console.WriteLine(new string('-', 58));
     foreach (var r in list)
-        Console.WriteLine($"{r.RouteCode,-8} {r.FlightCount,7} {r.SeatsSold,6} {r.AvgFare,10:C} {r.TotalRevenue,10:C}");
+        Console.WriteLine($"{r.RouteCode,-12} {r.FlightCount,7} {r.SeatsSold,6} {r.AvgFare,10:C} {r.TotalRevenue,10:C}");
 }
+
 
 static async Task RunOnTimePerformanceAsync(IFlightQueryService svc)
 {
