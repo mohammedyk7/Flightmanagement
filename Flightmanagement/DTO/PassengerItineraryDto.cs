@@ -15,5 +15,7 @@
         public string PassengerName { get; set; } = "";
         public string BookingRef { get; set; } = "";
         public List<ItinSegmentDto> Segments { get; set; } = new();
+        public int BookingId { get; set; }
+
     }
 }

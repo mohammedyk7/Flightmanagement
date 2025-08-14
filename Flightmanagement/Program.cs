@@ -8,6 +8,16 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Flightmanagement.Data;
+using System.Globalization;
+using FrequentFlierDto = Flightmanagement.DTOs.FrequentFlierDto;
+using PrintDTO = Flightmanagement.Interfaces;
+// make sure this is at the top of Program.cs
+
+
+
+
+
+
 
 // Interfaces
 using Flightmanagement.Interfaces;
@@ -152,12 +162,15 @@ while (true)
                 }
 
             case "9" when ANALYTICS_ENABLED:
-                await RunTopRoutesRevenueAsync(flightQuery, db);   // << add db
+                await RunTopRoutesRevenueAsync(flightQuery, db);
                 break;
 
             case "10" when ANALYTICS_ENABLED: await RunOnTimePerformanceAsync(flightQuery); break;
             case "11" when ANALYTICS_ENABLED: await RunSeatOccupancyAsync(flightQuery); break;
-            case "12" when ANALYTICS_ENABLED: await RunAvailableSeatsAsync(flightQuery); break;
+            case "12":  // or whatever number you used
+                await RunAvailableSeatsAsync(flightQuery);
+                break;
+
             case "13" when ANALYTICS_ENABLED: await RunCrewConflictsAsync(flightQuery); break;
             case "14" when ANALYTICS_ENABLED: await RunPassengersWithConnectionsAsync(flightQuery); break;
             case "15" when ANALYTICS_ENABLED: await RunFrequentFliersAsync(flightQuery); break;
@@ -210,7 +223,7 @@ while (true)
     }
     catch (Exception ex)
     {
-        Console.WriteLine("❌ " + ex.GetBaseException().Message);
+        Console.WriteLine(" " + ex.GetBaseException().Message);
     }
 }
 
@@ -274,7 +287,7 @@ static async Task CreateBookingAsync(IBookingService svc)
     }
 
     var booking = await svc.CreateBookingAsync(passengerId, items);
-    Console.WriteLine($"✅ Booking created: #{booking.BookingId}  Ref: {booking.BookingRef}");
+    Console.WriteLine($" Booking created: #{booking.BookingId}  Ref: {booking.BookingRef}");
 }
 
 static async Task CheckInTicketAsync(IBookingService svc)
@@ -282,7 +295,7 @@ static async Task CheckInTicketAsync(IBookingService svc)
     Console.Write("Ticket Id: ");
     var id = ReadInt();
     await svc.CheckInAsync(id);
-    Console.WriteLine("✅ Checked-in.");
+    Console.WriteLine(" Checked-in.");
 }
 
 static async Task AddBaggageAsync(IBookingService svc)
@@ -297,7 +310,7 @@ static async Task AddBaggageAsync(IBookingService svc)
     var tag = Console.ReadLine()!.Trim();
 
     await svc.AddBaggageAsync(id, kg, tag);
-    Console.WriteLine("✅ Baggage added.");
+    Console.WriteLine(" Baggage added.");
 }
 
 static async Task CancelBookingAsync(IBookingService svc)
@@ -305,7 +318,7 @@ static async Task CancelBookingAsync(IBookingService svc)
     Console.Write("Booking Id: ");
     var id = ReadInt();
     await svc.CancelBookingAsync(id);
-    Console.WriteLine("✅ Booking cancelled (tickets & baggage removed).");
+    Console.WriteLine(" Booking cancelled (tickets & baggage removed).");
 }
 
 static async Task ListFlightsWindowAsync(IFlightService svc)
@@ -364,6 +377,16 @@ static async Task PrintDbStatsAsync(FlightContext db)
 
 // --------------------------- Analytics helpers -----------------------------
 
+// Requires at top of Program.cs:
+// using Microsoft.EntityFrameworkCore;
+// using System.Globalization;
+
+// Requires at top of Program.cs:
+// using Microsoft.EntityFrameworkCore;
+// using System.Globalization;
+
+// requires: using Microsoft.EntityFrameworkCore;
+
 static async Task RunTopRoutesRevenueAsync(IFlightQueryService svc, FlightContext db)
 {
     var from = AskDate("From (UTC) yyyy-MM-dd");
@@ -372,41 +395,38 @@ static async Task RunTopRoutesRevenueAsync(IFlightQueryService svc, FlightContex
     Console.Write("Top N: ");
     var topN = ReadInt(min: 1);
 
-    // Normalize range if user typed it backwards
     if (from > to)
     {
         (from, to) = (to, from);
         Console.WriteLine($"(note) Swapped date range to {from:yyyy-MM-dd} .. {to:yyyy-MM-dd}");
     }
 
-    // Try the real service first (once fares/tickets are wired this will return Revenue)
+    // 1) Try real query first (when fares/tickets are wired this will return revenue)
     var res = await svc.GetTopRoutesByRevenueAsync(from, to, topN);
     var list = res?.ToList() ?? new List<RouteRevenueDto>();
 
-    // Fallback: derive something from the Flights table so you SEE output immediately
+    // 2) Fallback: derive rows from Flights so you always see output
     if (list.Count == 0)
     {
         Console.WriteLine("No data from service — deriving top routes from Flights table.");
 
-        // Group by RouteId and count flights in the window.
-        // (We don’t know your fares yet, so AvgFare/Revenue are 0 for now.)
-      
-            
-            list = db.Flights
-    .AsNoTracking()
-    .Where(f => f.DepartureTime >= from && f.DepartureTime <= to)
-    .GroupBy(f => f.RouteId)
-    .Select(g => new RouteRevenueDto(
-        "Route#" + g.Key,   // RouteCode
-        g.Count(),          // FlightCount
-        0,                  // SeatsSold
-        0m,                 // AvgFare
-        0m                  // TotalRevenue
-    ))
-    .OrderByDescending(x => x.FlightCount)
-    .Take(topN)
-    .ToList();
+        var agg = await db.Flights
+            .AsNoTracking()
+            .Where(f => f.DepartureTime >= from && f.DepartureTime <= to)
+            .GroupBy(f => f.RouteId)
+            .Select(g => new { RouteId = g.Key, FlightCount = g.Count() })
+            .OrderByDescending(x => x.FlightCount)
+            .Take(topN)
+            .ToListAsync();
 
+        list = agg.Select(x => new RouteRevenueDto(
+                    $"Route#{x.RouteId}",   // Route label
+                    x.FlightCount,         // Flights
+                    0,                     // Seats (unknown in fallback)
+                    0m,                    // AvgFare
+                    0m                     // Revenue
+               ))
+               .ToList();
     }
 
     if (list.Count == 0)
@@ -415,11 +435,37 @@ static async Task RunTopRoutesRevenueAsync(IFlightQueryService svc, FlightContex
         return;
     }
 
-    Console.WriteLine("\nRoute        Flights  Seats  AvgFare    Revenue");
+    // --- local helper: ASCII $0.00 (avoids ? for unsupported currency glyphs) ---
+    static void WriteMoney(decimal value, int width = 8)
+    {
+        var prev = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Magenta;
+
+        string s = "$" + value.ToString("N2", System.Globalization.CultureInfo.InvariantCulture);
+        if (s.Length < width) s = new string(' ', width - s.Length) + s;
+        Console.Write(s);
+
+        Console.ForegroundColor = prev;
+    }
+
+    // --- output (fixed 5 columns) ---
+    Console.WriteLine();
+    Console.WriteLine("Route        Flights  Seats  AvgFare  Revenue");
     Console.WriteLine(new string('-', 58));
+
     foreach (var r in list)
-        Console.WriteLine($"{r.RouteCode,-12} {r.FlightCount,7} {r.SeatsSold,6} {r.AvgFare,10:C} {r.TotalRevenue,10:C}");
+    {
+        Console.Write($"{r.RouteCode,-12} {r.FlightCount,7} {r.SeatsSold,6} ");
+        WriteMoney(r.AvgFare, 8); Console.Write("  ");
+        WriteMoney(r.TotalRevenue, 8);
+        Console.WriteLine();
+    }
 }
+
+
+
+
+
 
 
 static async Task RunOnTimePerformanceAsync(IFlightQueryService svc)
@@ -436,29 +482,111 @@ static async Task RunOnTimePerformanceAsync(IFlightQueryService svc)
     Console.WriteLine("\nKey                   OnTime   Total   Pct");
     Console.WriteLine(new string('-', 50));
     foreach (var r in list)
-        Console.WriteLine($"{r.Key,-20} {r.OnTimeCount,7} {r.TotalCount,7} {r.OnTimePct,6:P1}");
+        Console.WriteLine($"{r.Key,-20} {r.OnTimeCount,7} {r.TotalCount,7} {FormatPercent(r.OnTimePct, 6)}");
+
+
+    static string FormatPercent(decimal ratio, int width = 6)
+    {
+        // ASCII-only: e.g., 100.0%
+        string s = ((double)ratio * 100).ToString("0.0", CultureInfo.InvariantCulture) + "%";
+        if (s.Length < width) s = new string(' ', width - s.Length) + s; // right align
+        return s;
+    }
+
+}
+
+// ASCII-only percent (prevents weird '?' after % on some consoles)
+
+
+// ASCII-only percent (prevents weird '?' after % on some consoles)
+static string FormatPercent(decimal ratio, int width = 9)
+{
+    string s = ((double)ratio * 100).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%";
+    if (s.Length < width) s = new string(' ', width - s.Length) + s; // right align
+    return s;
 }
 
 static async Task RunSeatOccupancyAsync(IFlightQueryService svc)
 {
+    // Ask for filter: ≥ min %; if none meet it, we will fall back to Top N.
+    Console.Write("Minimum occupancy % (e.g., 80, Enter = none): ");
+    var minPctRaw = Console.ReadLine()?.Trim();
+
+    Console.Write("Top N fallback (e.g., 20, Enter = 20): ");
+    var topNRaw = Console.ReadLine()?.Trim();
+
+    // Parse inputs
+    decimal? minPct = null;
+    if (!string.IsNullOrWhiteSpace(minPctRaw) &&
+        decimal.TryParse(minPctRaw, System.Globalization.NumberStyles.Number,
+                         System.Globalization.CultureInfo.InvariantCulture, out var v))
+    {
+        if (v < 0) v = 0; if (v > 100) v = 100;
+        minPct = v / 100m; // 0..1
+    }
+
+    int topN = 20; // sensible default for fallback or “no threshold” usage
+    if (!string.IsNullOrWhiteSpace(topNRaw) && int.TryParse(topNRaw, out var n) && n > 0)
+        topN = n;
+
     var res = await svc.GetSeatOccupancyAsync();
     var list = res?.ToList() ?? new List<SeatOccDto>();
     if (list.Count == 0) { Console.WriteLine("No data."); return; }
 
+    // Sort once
+    var sorted = list
+        .OrderByDescending(x => x.OccupancyPct)
+        .ThenBy(x => x.DepartureDate)
+        .ToList();
+
+    // Apply “>= threshold OR Top N” semantics
+    List<SeatOccDto> toShow;
+    if (minPct is not null)
+    {
+        toShow = sorted.Where(x => x.OccupancyPct >= minPct.Value).ToList();
+        if (toShow.Count == 0)
+        {
+            Console.WriteLine($"No flights >= {((double)minPct.Value * 100):0.#}% — showing top {topN} instead.");
+            toShow = sorted.Take(topN).ToList();
+        }
+    }
+    else
+    {
+        toShow = sorted.Take(topN).ToList();
+    }
+
+    if (toShow.Count == 0) { Console.WriteLine("No data."); return; }
+
     Console.WriteLine("\nFlight   Date        Occupancy  Route");
     Console.WriteLine(new string('-', 55));
-    foreach (var r in list)
-        Console.WriteLine($"{r.FlightNumber,-7} {r.DepartureDate:yyyy-MM-dd}  {r.OccupancyPct,9:P1}  {r.Origin}->{r.Destination}");
+
+    foreach (var r in toShow)
+    {
+        var routeLabel = string.IsNullOrWhiteSpace(r.Destination)
+            ? r.Origin                      // e.g., "Route#18"
+            : $"{r.Origin}->{r.Destination}";
+
+        Console.WriteLine($"{r.FlightNumber,-7} {r.DepartureDate:yyyy-MM-dd}  {FormatPercent(r.OccupancyPct, 9)}  {routeLabel}");
+    }
 }
+
+
+
+
+
+// FlightQueryService.cs
 
 static async Task RunAvailableSeatsAsync(IFlightQueryService svc)
 {
     Console.Write("Flight Id: ");
     var flightId = ReadInt(min: 1);
+
     var seats = await svc.GetAvailableSeatNumbersAsync(flightId);
-    var list = seats?.ToList() ?? new List<string>();
+    var list  = seats?.ToList() ?? new List<string>();
+
     Console.WriteLine(list.Count == 0 ? "(none)" : string.Join(", ", list));
 }
+
 
 static async Task RunCrewConflictsAsync(IFlightQueryService svc)
 {
@@ -476,12 +604,16 @@ static async Task RunPassengersWithConnectionsAsync(IFlightQueryService svc)
 {
     Console.Write("Max layover hours (e.g., 6): ");
     var hours = ReadInt(min: 1);
+
     var res = await svc.GetPassengersWithConnectionsAsync(hours);
     var list = res?.ToList() ?? new List<ConnectionDto>();
     if (list.Count == 0) { Console.WriteLine("No connections found."); return; }
+
     foreach (var r in list)
         Console.WriteLine($"{r.PassengerName} | {r.Itinerary}");
 }
+
+
 
 static async Task RunFrequentFliersAsync(IFlightQueryService svc)
 {
@@ -491,7 +623,8 @@ static async Task RunFrequentFliersAsync(IFlightQueryService svc)
     var list = res?.ToList() ?? new List<FrequentFlierDto>();
     if (list.Count == 0) { Console.WriteLine("No frequent fliers."); return; }
     foreach (var r in list)
-        Console.WriteLine($"{r.PassengerName} | Flights:{r.FlightCount} | Distance:{r.TotalDistance:N0} km");
+        Console.WriteLine($"{r.PassengerName} | Flights:{r.FlightCount} | Distance:{r.TotalDistanceKm:N0} km");
+
 }
 
 static async Task RunMaintenanceAlertsAsync(IFlightQueryService svc)
@@ -513,33 +646,53 @@ static async Task RunBaggageOverweightAsync(IFlightQueryService svc)
     decimal limit = 30m;
     _ = decimal.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out limit);
 
-    var res = await svc.GetBaggageOverweightAlertsAsync(limit);
-    var list = res?.ToList() ?? new List<OverweightDto>();
+    var res = await svc.GetBaggageOverweightAlertsAsync(limit);   // IReadOnlyList<OverweightDto>
+    var list = res.ToList();                                       // no null-coalescing needed
+
     if (list.Count == 0) { Console.WriteLine("No overweight baggage."); return; }
+
     foreach (var r in list)
         Console.WriteLine($"Booking {r.BookingRef} | Ticket {r.TicketId} | Total {r.TotalWeightKg} kg");
+}
+
+
+static void PrintSet(string label, IEnumerable<string> items, int perLine = 8, int maxItems = 40)
+{
+    var list = items?.Distinct().ToList() ?? new List<string>();
+    Console.WriteLine($"\n{label} [{list.Count}]");
+
+    int shown = Math.Min(list.Count, maxItems);
+    for (int i = 0; i < shown; i += perLine)
+        Console.WriteLine("  " + string.Join("  |  ", list.Skip(i).Take(perLine)));
+
+    if (shown < list.Count)
+        Console.WriteLine($"  … and {list.Count - shown} more");
 }
 
 static async Task RunSetPartitioningAsync(IFlightQueryService svc)
 {
     var set = await svc.GetSetOperationSamplesAsync();
-    Console.WriteLine("\nSet Operations:");
-    Console.Write("Union     : "); foreach (var x in set.UnionSample) Console.Write(x + " "); Console.WriteLine();
-    Console.Write("Intersect : "); foreach (var x in set.IntersectSample) Console.Write(x + " "); Console.WriteLine();
-    Console.Write("Except    : "); foreach (var x in set.ExceptSample) Console.Write(x + " "); Console.WriteLine();
 
+    Console.WriteLine("\nSet Operations:");
+    PrintSet("Union", set.UnionSample);
+    PrintSet("Intersect", set.IntersectSample);
+    PrintSet("Except", set.ExceptSample);
+
+    // Paging prompt (kept as-is)
     Console.Write("\nPaging — page #: ");
     var page = ReadInt(min: 1);
     var pageRes = await svc.PageFlightsAsync(page, 10);
-    var list = pageRes?.ToList() ?? new List<FlightPageDto>();
+    var list = pageRes.ToList();
     if (list.Count == 0) { Console.WriteLine("No flights."); return; }
+
     Console.WriteLine("\nFlights:");
     foreach (var r in list)
         Console.WriteLine($"{r.FlightNumber} {r.DepartureDate:g} | {r.Origin}->{r.Destination}");
 }
 
-static async Task RunConversionOpsAsync(IFlightQueryService svc)
+static async Task RunConversionOpsAsync(PrintDTO.IFlightQueryService svc)
 {
+    // ToDictionary
     var map = await svc.FlightsByNumberMapAsync();
     Console.WriteLine($"\nMap created with {map.Count} entries (ToDictionary). First 5 keys:");
     int shown = 0;
@@ -549,31 +702,51 @@ static async Task RunConversionOpsAsync(IFlightQueryService svc)
         if (++shown == 5) break;
     }
 
+    // ToArray
     Console.Write("Top N routes for array demo: ");
     var top = ReadInt(min: 1);
     var arr = await svc.TopRoutesToArrayAsync(top);
     Console.WriteLine("Top routes array:");
-    foreach (var r in arr) Console.WriteLine($"{r.RouteCode}");
+    foreach (PrintDTO.RouteRevenueDto r in arr)
+        Console.WriteLine($"{r.RouteCode}");
 
+    // AsEnumerable
     var asEnumCount = await svc.AsEnumerableSampleCountAsync();
     Console.WriteLine($"AsEnumerable sample count: {asEnumCount}");
 
+    // OfType
     var ofType = await svc.OfTypeSampleAsync();
     Console.WriteLine($"OfType sample count: {ofType}");
 }
+
+// Put this helper somewhere in Program.cs (once)
+static void WriteMoney(decimal value, int width = 14)
+{
+    // Oman uses 3 decimal places (baisa)
+    string s = "$" + value.ToString("N3", CultureInfo.InvariantCulture);
+    if (s.Length < width) s = new string(' ', width - s.Length) + s;
+    Console.Write(s);
+}
+
 
 static async Task RunRunningTotalsAsync(IFlightQueryService svc)
 {
     Console.Write("How many days of history (e.g., 14): ");
     var days = ReadInt(min: 1);
+
     var running = await svc.GetRunningDailyRevenueAsync(days);
     var list = running?.ToList() ?? new List<RunningRevenueDto>();
     if (list.Count == 0) { Console.WriteLine("No data."); return; }
 
-    Console.WriteLine("\nDate         Revenue      Running");
-    Console.WriteLine(new string('-', 40));
+    Console.WriteLine("\nDate         Revenue          Running");
+    Console.WriteLine(new string('-', 44));
     foreach (var r in list)
-        Console.WriteLine($"{r.Date:yyyy-MM-dd}  {r.Revenue,10:C}  {r.RunningTotal,10:C}");
+    {
+        Console.Write($"{r.Date:yyyy-MM-dd}  ");
+        WriteMoney(r.Revenue); Console.Write("  ");
+        WriteMoney(r.RunningTotal);
+        Console.WriteLine();
+    }
 }
 
 // --------------------------- Input Helpers -----------------------------
@@ -617,6 +790,12 @@ static DateTime AskDate(string label)
     }
 }
 
+
+
+// ASCII-safe money printer (e.g., $0.00), right-aligned and magenta
+
+
+
 // Fallback generator for Forecast (used if the service returns no data)
 static List<ForecastDto> GenerateSampleForecast(int days)
 {
@@ -645,3 +824,5 @@ static List<ForecastDto> GenerateSampleForecast(int days)
     }
     return list;
 }
+
+

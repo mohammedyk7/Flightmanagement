@@ -1,6 +1,10 @@
-﻿using System;
+﻿
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Flightmanagement.Interfaces;
+using DTO = Flightmanagement.DTOs;
+
 
 namespace Flightmanagement.Interfaces
 {
@@ -77,17 +81,41 @@ namespace Flightmanagement.Interfaces
         Task<IReadOnlyList<SeatOccDto>> GetSeatOccupancyAsync();
         Task<IReadOnlyList<string>> GetAvailableSeatNumbersAsync(int flightId);
         Task<IReadOnlyList<CrewConflictDto>> GetCrewSchedulingConflictsAsync();
+        //Task<IReadOnlyList<ConnectionDto>> GetPassengersWithConnectionsAsync(int maxLayoverHours);
+
         Task<IReadOnlyList<ConnectionDto>> GetPassengersWithConnectionsAsync(int maxLayoverHours);
-        Task<IReadOnlyList<FrequentFlierDto>> GetFrequentFliersAsync(int minFlights);
+
+
+        //Task<IReadOnlyList<FrequentFlierDto>> GetFrequentFliersAsync(int minFlights);
         Task<IReadOnlyList<MaintenanceAlertDto>> GetMaintenanceAlertsAsync(DateTime until);
-        Task<IReadOnlyList<OverweightDto>> GetBaggageOverweightAlertsAsync(decimal perTicketLimitKg);
-        Task<SetOpsDto> GetSetOperationSamplesAsync();
-        Task<IReadOnlyList<FlightPageDto>> PageFlightsAsync(int page, int pageSize);
+       
+        
+        
         Task<Dictionary<string, int>> FlightsByNumberMapAsync();
-        Task<RouteRevenueDto[]> TopRoutesToArrayAsync(int topN);
+        
         Task<int> AsEnumerableSampleCountAsync();
         Task<int> OfTypeSampleAsync();
         Task<IReadOnlyList<RunningRevenueDto>> GetRunningDailyRevenueAsync(int days);
+        Task<IReadOnlyList<Flightmanagement.DTOs.FrequentFlierDto>> GetFrequentFliersAsync(int minFlights);
+
+        Task<IReadOnlyList<DTO.OverweightDto>> GetBaggageOverweightAlertsAsync(decimal perTicketLimitKg);
+
+        // 11) Complex Set/Partitioning Examples
+
+        Task<SetOpsDto> GetSetOperationSamplesAsync();
+        // 11b) Paging demo
+        Task<IReadOnlyList<DTO.FlightPageDto>> PageFlightsAsync(int page, int pageSize);
+
+       
+        
+        Task<Flightmanagement.Interfaces.RouteRevenueDto[]> TopRoutesToArrayAsync(int topN);
+
+
+
+
+
+
+
         public Task<IReadOnlyList<ForecastDto>> ForecastNextNDaysAsync(int days)
         {
             var start = DateTime.UtcNow.Date.AddDays(1);
